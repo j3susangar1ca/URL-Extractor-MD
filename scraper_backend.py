@@ -586,7 +586,7 @@ class WAFDetector:
                 return True
 
         # Status code-based checks
-        if status in (403, 503, 429, 401, 202):
+        if status in (400, 401, 403, 429, 503, 202):
             for h in cls.WAF_HEADERS:
                 if h in response.headers:
                     return True
@@ -678,8 +678,14 @@ class PlaywrightCaptchaResolver(AbstractCaptchaResolver):
                 ),
             )
             page = await context.new_page()
-            await page.goto(str(response.url), wait_until="networkidle")
-            await asyncio.sleep(5)
+            try:
+                # wait_until="domcontentloaded" is much faster and reliable than "networkidle" which hangs on trackers/ads.
+                await page.goto(str(response.url), wait_until="domcontentloaded", timeout=15000)
+            except Exception as e:
+                self._logger.warning("Advertencia: Page.goto no completó la carga pero procedemos a capturar cookies: %s", e)
+            
+            # Wait for any anti-bot JS script execution to settle and store cookies
+            await asyncio.sleep(6)
             cookies = await context.cookies()
             await browser.close()
             cookie_str = "; ".join(
