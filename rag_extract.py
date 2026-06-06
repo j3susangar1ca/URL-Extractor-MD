@@ -76,7 +76,8 @@ NOISE_SELECTORS: List[str] = [
     "[class*='popup']", "[class*='overlay']", "[class*='modal-backdrop']",
     "[class*='interstitial']", "[class*='paywall']",
     # Sidebars & widgets
-    ".sidebar", "#sidebar", ".widget", "[class*='sidebar']",
+    ".sidebar", "#sidebar", ".widget", "[class*='sidebar-left']",
+    "[class*='sidebar-right']", "[class*='sidebar-inner']",
     "[class*='widget']", "[class*='rail']",
     # Advertisements
     ".ad", ".ads", ".advert", ".advertisement", ".sponsored",
