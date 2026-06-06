@@ -1142,6 +1142,14 @@ class EliteScraperUI(QMainWindow):
         actions_layout.addWidget(self.cancel_btn)
         actions_layout.addStretch()
 
+        self.preview_btn = QPushButton("  Previsualizar")
+        self.preview_btn.setObjectName("secondaryBtn")
+        self.preview_btn.setCursor(Qt.PointingHandCursor)
+        self.preview_btn.setFixedHeight(42)
+        self.preview_btn.setMinimumWidth(140)
+        self.preview_btn.setIcon(Icons.preview())
+        self.preview_btn.setIconSize(QSize(18, 18))
+
         self.download_btn = QPushButton("  Iniciar Extracci\u00f3n")
         self.download_btn.setObjectName("primaryBtn")
         self.download_btn.setCursor(Qt.PointingHandCursor)
@@ -1150,6 +1158,7 @@ class EliteScraperUI(QMainWindow):
         self.download_btn.setIcon(Icons.download())
         self.download_btn.setIconSize(QSize(18, 18))
 
+        actions_layout.addWidget(self.preview_btn)
         actions_layout.addWidget(self.download_btn)
 
         root_layout.addWidget(actions_widget)
@@ -1163,6 +1172,7 @@ class EliteScraperUI(QMainWindow):
         """Wire all widget signals to their handler slots."""
         self.browse_btn.clicked.connect(self._browse_folder)
         self.download_btn.clicked.connect(self._toggle_extraction)
+        self.preview_btn.clicked.connect(self._toggle_preview)
         self.cancel_btn.clicked.connect(self._cancel_extraction)
         self.clear_log_btn.clicked.connect(self._clear_log)
 
@@ -1173,6 +1183,7 @@ class EliteScraperUI(QMainWindow):
         """Set the initial enabled/visible state of interactive widgets."""
         self.cancel_btn.setVisible(False)
         self.download_btn.setEnabled(False)
+        self.preview_btn.setEnabled(False)
 
     # ─── LOGGING ─────────────────────────────────────
     def _log(self, level: str, message: str) -> None:
@@ -1251,9 +1262,15 @@ class EliteScraperUI(QMainWindow):
         if self._is_extracting:
             self._cancel_extraction()
             return
-        self._start_extraction()
+        self._start_extraction(preview_only=False)
 
-    def _start_extraction(self) -> None:
+    def _toggle_preview(self) -> None:
+        """Toggle to starting a metadata preview."""
+        if self._is_extracting:
+            return
+        self._start_extraction(preview_only=True)
+
+    def _start_extraction(self, preview_only: bool = False) -> None:
         """Validate inputs, lock the UI, and launch the scrape worker thread."""
         url = self.url_input.text().strip()
         filename = self.filename_input.text().strip()
@@ -1272,6 +1289,7 @@ class EliteScraperUI(QMainWindow):
         # UI state: extracting
         self.download_btn.setText("  Extrayendo\u2026")
         self.download_btn.setEnabled(False)
+        self.preview_btn.setEnabled(False)
         self.cancel_btn.setVisible(True)
         self.url_input.setReadOnly(True)
         self.filename_input.setReadOnly(True)
@@ -1280,11 +1298,14 @@ class EliteScraperUI(QMainWindow):
         self.status_label.setText("Conectando...")
         self.status_label.setStyleSheet(f"color: {Theme.ACCENT};")
 
-        self._log(LogLevel.INFO, "Iniciando extracci\u00f3n\u2026")
+        if preview_only:
+            self._log(LogLevel.INFO, "Iniciando previsualizaci\u00f3n\u2026")
+        else:
+            self._log(LogLevel.INFO, "Iniciando extracci\u00f3n\u2026")
 
         # Worker thread
         self._thread = QThread()
-        self._worker = ScrapeWorker(url, filename, save_path)
+        self._worker = ScrapeWorker(url, filename, save_path, preview_only=preview_only)
         self._worker.moveToThread(self._thread)
 
         # Connect signals
