@@ -1051,16 +1051,17 @@ def _yaml_escape(text: str) -> str:
 # 9. Pickle-safe standalone function for ProcessPoolExecutor
 # ---------------------------------------------------------------------------
 
-def parse_html_unified(payload: bytes, source_url: str) -> dict:
+def parse_html_unified(payload: bytes, source_url: str, encoding: str = "utf-8") -> dict:
     """Unified extraction function for CPU-isolated processing.
 
-    Performs selectolax metadata extraction + BeautifulSoup cleaning +
+    Performs selectolax metadata extraction + selectolax/BeautifulSoup cleaning +
     html2text conversion in a single pass.  This function **must** be
     pickle-safe — no closures, no instance methods, no ``self``.
 
     Args:
         payload: Raw HTML bytes.
         source_url: The URL from which the HTML was fetched.
+        encoding: Encoding format for decoding raw bytes.
 
     Returns:
         A flat dict with the following keys:
@@ -1078,7 +1079,7 @@ def parse_html_unified(payload: bytes, source_url: str) -> dict:
         - ``errors`` (list[str])
     """
     errors: List[str] = []
-    html = payload.decode("utf-8", errors="replace")
+    html = payload.decode(encoding, errors="replace")
 
     # ---- Phase 1: Selectolax fast metadata ----
     title = ""
@@ -1111,74 +1112,145 @@ def parse_html_unified(payload: bytes, source_url: str) -> dict:
     except Exception as exc:  # noqa: BLE001
         errors.append(f"selectolax phase failed: {exc}")
 
-    # ---- Phase 2: BeautifulSoup deep cleaning ----
+    # ---- Phase 2: Content cleaning & extraction (Selectolax with BS4 fallback) ----
     clean_md = ""
     images_found: List[str] = []
     links_found: List[str] = []
 
-    try:
-        from bs4 import BeautifulSoup as _BS  # type: ignore[import-untyped]
-
-        soup = _BS(html, "lxml" if "lxml" not in _MISSING_DEPS else "html.parser")
-
-        # Strip noise tags
-        for tag_name in STRIP_TAGS:
-            for tag in soup.find_all(tag_name):
-                tag.decompose()
-
-        # Remove noise selectors
-        for selector in NOISE_SELECTORS:
-            try:
-                for tag in soup.select(selector):
-                    tag.decompose()
-            except Exception:  # noqa: BLE001, S110
-                pass
-
-        # Locate main content
-        content_el = None
-        for selector in CONTENT_SELECTORS:
-            found = soup.select_one(selector)
-            if found:
-                content_el = found
-                break
-        if content_el is None:
-            content_el = soup.body or soup
-
-        # Extract links and images
-        for a_tag in content_el.find_all("a", href=True):
-            links_found.append(str(a_tag["href"]))
-        for img_tag in content_el.find_all("img", src=True):
-            images_found.append(str(img_tag["src"]))
-
-        # ---- Phase 3: html2text conversion ----
-        raw_html_fragment = str(content_el)
-
+    # Check if selectolax is available and not in missing deps
+    use_selectolax = "selectolax" not in _MISSING_DEPS
+    if use_selectolax:
         try:
-            import html2text as _h2t  # type: ignore[import-untyped]
+            from selectolax.parser import HTMLParser as _SP  # type: ignore[import-untyped]
 
-            converter = _h2t.HTML2Text()
-            converter.body_width = 0
-            converter.unicode_snob = True
-            converter.ignore_links = False
-            converter.ignore_images = False
-            converter.protect_links = True
-            converter.wrap_links = False
-            converter.mark_code = True
-            converter.inline_links = True
-            converter.ignore_tables = False
-            clean_md = converter.handle(raw_html_fragment)
+            tree = _SP(html)
+            # 1. Strip noise tags
+            for tag in STRIP_TAGS:
+                for node in tree.css(tag):
+                    node.decompose()
 
-            # Post-process
-            clean_md = "\n".join(line.rstrip() for line in clean_md.split("\n"))
-            clean_md = _RE_FOUR_BLANKS.sub("\n\n", clean_md)
-            clean_md = _RE_ZERO_WIDTH.sub("", clean_md)
-            clean_md = clean_md.strip()
+            # 2. Strip noise selectors
+            for selector in NOISE_SELECTORS:
+                try:
+                    for node in tree.css(selector):
+                        node.decompose()
+                except Exception:
+                    pass
+
+            # 3. Locate main content
+            content_el = None
+            for selector in CONTENT_SELECTORS:
+                found = tree.css_first(selector)
+                if found:
+                    content_el = found
+                    break
+            if content_el is None:
+                content_el = tree.body or tree.root
+
+            if content_el:
+                # Extract links and images from the cleaned content element
+                for a_node in content_el.css("a[href]"):
+                    links_found.append(a_node.attributes.get("href", ""))
+                for img_node in content_el.css("img[src]"):
+                    images_found.append(img_node.attributes.get("src", ""))
+
+                raw_html_fragment = content_el.html
+
+                try:
+                    import html2text as _h2t  # type: ignore[import-untyped]
+
+                    converter = _h2t.HTML2Text()
+                    converter.body_width = 0
+                    converter.unicode_snob = True
+                    converter.ignore_links = False
+                    converter.ignore_images = False
+                    converter.protect_links = True
+                    converter.wrap_links = False
+                    converter.mark_code = True
+                    converter.inline_links = True
+                    converter.ignore_tables = False
+                    clean_md = converter.handle(raw_html_fragment)
+
+                    # Post-process
+                    clean_md = "\n".join(line.rstrip() for line in clean_md.split("\n"))
+                    clean_md = _RE_FOUR_BLANKS.sub("\n\n", clean_md)
+                    clean_md = _RE_ZERO_WIDTH.sub("", clean_md)
+                    clean_md = clean_md.strip()
+                except Exception as exc:
+                    errors.append(f"html2text conversion failed: {exc}")
+                    clean_md = re.sub(r"<[^>]+>", "", raw_html_fragment)
+            else:
+                use_selectolax = False
+        except Exception as exc:
+            errors.append(f"selectolax cleanup failed, falling back to BeautifulSoup: {exc}")
+            use_selectolax = False
+
+    if not use_selectolax:
+        try:
+            from bs4 import BeautifulSoup as _BS  # type: ignore[import-untyped]
+
+            soup = _BS(html, "lxml" if "lxml" not in _MISSING_DEPS else "html.parser")
+
+            # Strip noise tags
+            for tag_name in STRIP_TAGS:
+                for tag in soup.find_all(tag_name):
+                    tag.decompose()
+
+            # Remove noise selectors
+            for selector in NOISE_SELECTORS:
+                try:
+                    for tag in soup.select(selector):
+                        tag.decompose()
+                except Exception:  # noqa: BLE001, S110
+                    pass
+
+            # Locate main content
+            content_el = soup.find(lambda t: any(t.name == sel or (t.has_attr('class') and any(c in sel for c in t['class'])) or (t.has_attr('id') and t['id'] == sel.lstrip('#')) for sel in CONTENT_SELECTORS))
+            # Wait, let's keep the exact original logic for BS4 fallback:
+            content_el = None
+            for selector in CONTENT_SELECTORS:
+                found = soup.select_one(selector)
+                if found:
+                    content_el = found
+                    break
+            if content_el is None:
+                content_el = soup.body or soup
+
+            # Extract links and images
+            for a_tag in content_el.find_all("a", href=True):
+                links_found.append(str(a_tag["href"]))
+            for img_tag in content_el.find_all("img", src=True):
+                images_found.append(str(img_tag["src"]))
+
+            # ---- Phase 3: html2text conversion ----
+            raw_html_fragment = str(content_el)
+
+            try:
+                import html2text as _h2t  # type: ignore[import-untyped]
+
+                converter = _h2t.HTML2Text()
+                converter.body_width = 0
+                converter.unicode_snob = True
+                converter.ignore_links = False
+                converter.ignore_images = False
+                converter.protect_links = True
+                converter.wrap_links = False
+                converter.mark_code = True
+                converter.inline_links = True
+                converter.ignore_tables = False
+                clean_md = converter.handle(raw_html_fragment)
+
+                # Post-process
+                clean_md = "\n".join(line.rstrip() for line in clean_md.split("\n"))
+                clean_md = _RE_FOUR_BLANKS.sub("\n\n", clean_md)
+                clean_md = _RE_ZERO_WIDTH.sub("", clean_md)
+                clean_md = clean_md.strip()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"html2text conversion failed: {exc}")
+                # Fallback: strip tags
+                clean_md = re.sub(r"<[^>]+>", "", raw_html_fragment)
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"html2text conversion failed: {exc}")
-            # Fallback: strip tags
-            clean_md = re.sub(r"<[^>]+>", "", raw_html_fragment)
-    except Exception as exc:  # noqa: BLE001
-        errors.append(f"BeautifulSoup phase failed: {exc}")
+            errors.append(f"BeautifulSoup phase failed: {exc}")
 
     # ---- Build PageMetadata dict ----
     # Merge selectolax meta with dedicated extraction

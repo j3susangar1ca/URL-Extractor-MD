@@ -563,16 +563,32 @@ class WAFDetector:
             True si se detecta un desafío WAF, False en caso contrario.
         """
         status = response.status_code
-        if status in (403, 503, 429, 401):
+        
+        # Check AWS WAF action header across any status code
+        if "x-amzn-waf-action" in response.headers:
+            return True
+
+        # Decode body safely
+        body = ""
+        try:
+            if response.content:
+                body = response.content[:8192].decode(response.encoding or "utf-8", errors="replace").lower()
+        except Exception:
+            pass
+        if not body and response.text:
             body = response.text[:8192].lower()
-            for sig in cls.BODY_SIGS:
-                if sig in body:
-                    return True
+
+        # Check body signatures across any status code
+        for sig in cls.BODY_SIGS:
+            if sig in body:
+                return True
+
+        # Status code-based checks
+        if status in (403, 503, 429, 401, 202):
             for h in cls.WAF_HEADERS:
                 if h in response.headers:
                     return True
-        if "x-amzn-waf-action" in response.headers:
-            return True
+                    
         if status in (301, 302, 307, 308):
             loc = response.headers.get("location", "").lower()
             if "challenge" in loc or "captcha" in loc:
@@ -726,7 +742,7 @@ class IsolatedExtractor:
             initializer=_init_worker,
         )
 
-    async def extract(self, payload: bytes, source_url: str) -> dict:
+    async def extract(self, payload: bytes, source_url: str, encoding: str = "utf-8") -> dict:
         """Extrae contenido estructurado del HTML en proceso aislado.
 
         Delega a ``rag_extract.parse_html_unified()`` que realiza:
@@ -736,13 +752,14 @@ class IsolatedExtractor:
         Args:
             payload: Bytes del documento HTML crudo.
             source_url: URL fuente para resolución de enlaces relativos.
+            encoding: Codificación de caracteres detectada para el payload.
 
         Returns:
             Diccionario con resultado de ``parse_html_unified()``.
         """
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            self._executor, parse_html_unified, payload, source_url
+            self._executor, parse_html_unified, payload, source_url, encoding
         )
 
     def shutdown(self) -> None:
@@ -1034,6 +1051,21 @@ class EliteScraperBackend:
             )
             logger.addHandler(h)
         return logger
+
+    # ------------------------------------------------------------------
+    def clear_cookies(self) -> None:
+        """Limpia las cookies de todas las sesiones de curl_cffi activas.
+
+        Evita la contaminación cruzada de cookies entre distintas ejecuciones
+        de scraping para mejorar la privacidad y fiabilidad de las peticiones.
+        """
+        self._logger.info("Purgando cookies de todas las sesiones activas...")
+        for pid, session in self._sessions.items():
+            try:
+                session.cookies.clear()
+                self._logger.debug("Cookies limpiadas para perfil '%s'", pid)
+            except Exception as e:
+                self._logger.warning("No se pudieron limpiar las cookies del perfil '%s': %s", pid, e)
 
     # ------------------------------------------------------------------
     async def _get_session(self, profile: BrowserProfile) -> AsyncSession:
