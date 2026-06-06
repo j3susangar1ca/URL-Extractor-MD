@@ -66,22 +66,22 @@ URL Extractor MD was built for a single purpose: **ingest web content into RAG s
 <tr>
 <td width="50%" valign="top">
 
-### The Problem
+### ❌ The Problem
 
-- Generic scrapers strip `<article>` content alongside navbars, cookie banners, and ads
-- Encoding errors corrupt accented characters (`á é ñ ü`) breaking tokenizer indexes
-- No atomic writes — interrupted saves produce half-written files
-- Output format not optimized for vector DB chunking
+- 🗑️ **Generic scrapers** strip `<article>` content alongside navbars, cookie banners, and ads
+- 🔠 **Encoding errors** corrupt accented characters (`á é ñ ü`) breaking tokenizer indexes
+- ⚠️ **No atomic writes** — interrupted saves produce corrupted, half-written files
+- 🧩 **Output format** is not optimized for vector DB chunking
 
 </td>
 <td width="50%" valign="top">
 
-### The Solution
+### ✅ The Solution
 
-- Semantic content isolation via CSS selector priority tree
-- Forced UTF-8 encoding at every stage of the pipeline
-- Atomic write pattern: `tmp → fsync → os.replace()`
-- RAG-optimized 500-800 word chunks with YAML provenance
+- 🎯 **Semantic content isolation** via advanced CSS selector priority tree
+- 🛡️ **Forced UTF-8 encoding** guarantees character preservation at every stage
+- 🔒 **Atomic write pattern:** `tmp → fsync → os.replace()` ensures safe disk writes
+- 🗂️ **RAG-optimized chunks** of 500-800 words with complete YAML provenance
 
 </td>
 </tr>
@@ -203,48 +203,27 @@ print(result.checksum_sha256)  # a3f2b8c9d1e4...
 
 <div align="center">
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                                                                     │
-│   URL INPUT                                                         │
-│       │                                                             │
-│       ▼                                                             │
-│   ┌──────────────┐    ┌─────────────────┐    ┌──────────────────┐  │
-│   │              │    │                 │    │                  │  │
-│   │   FETCHER    │───▶│   EXTRACTOR     │───▶│   CLEANER        │  │
-│   │   requests   │    │   BeautifulSoup │    │   html2text      │  │
-│   │   + headers  │    │   + lxml        │    │   (literal mode) │  │
-│   │              │    │                 │    │                  │  │
-│   └──────────────┘    └────────┬────────┘    └────────┬─────────┘  │
-│                                │                      │            │
-│                                ▼                      ▼            │
-│                    ┌───────────────────┐    ┌───────────────────┐  │
-│                    │                   │    │                   │  │
-│                    │  METADATA         │    │  CONTENT          │  │
-│                    │  YAML frontmatter │    │  Markdown body    │  │
-│                    │  OG / Schema.org  │    │  + links table    │  │
-│                    │                   │    │                   │  │
-│                    └─────────┬─────────┘    └─────────┬─────────┘  │
-│                              │                        │            │
-│                              ▼                        ▼            │
-│                    ┌─────────────────────────────────────────┐     │
-│                    │                                         │     │
-│                    │           DOCUMENT BUILDER              │     │
-│                    │   Merges YAML + Content + References    │     │
-│                    │                                         │     │
-│                    └────────────────┬────────────────────────┘     │
-│                                     │                              │
-│                        ┌────────────┴────────────┐                 │
-│                        ▼                         ▼                 │
-│              ┌──────────────────┐     ┌──────────────────────┐     │
-│              │                  │     │                      │     │
-│              │  ATOMIC STORAGE  │     │  RAG CHUNKER         │     │
-│              │  tmp→fsync→move  │     │  500-800 word frags  │     │
-│              │  main.md         │     │  chunks/chunk_N.md   │     │
-│              │                  │     │                      │     │
-│              └──────────────────┘     └──────────────────────┘     │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    URL(["🌐 URL INPUT"]) --> F["📡 FETCHER<br/><i>requests + headers</i>"]
+
+    subgraph Pipeline ["⚙️ Extraction Pipeline"]
+        F --> E["🧠 EXTRACTOR<br/><i>BeautifulSoup + lxml</i>"]
+        E --> C["🧹 CLEANER<br/><i>html2text (literal mode)</i>"]
+
+        E --> M["🏷️ METADATA<br/><i>YAML frontmatter<br/>OG / Schema.org</i>"]
+        C --> T["📝 CONTENT<br/><i>Markdown body<br/>+ links table</i>"]
+
+        M --> B{{"🏗️ DOCUMENT BUILDER<br/><i>Merges YAML + Content + References</i>"}}
+        T --> B
+    end
+
+    B --> S["💾 ATOMIC STORAGE<br/><i>tmp → fsync → move<br/>main.md</i>"]
+    B --> R["🔪 RAG CHUNKER<br/><i>500-800 word frags<br/>chunks/chunk_N.md</i>"]
+
+    style URL fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:#fff
+    style B fill:#e67e22,stroke:#d35400,stroke-width:2px,color:#fff
+    style Pipeline fill:#fafafa,stroke:#bdc3c7,stroke-width:2px,stroke-dasharray: 5 5,color:#333
 ```
 
 </div>
@@ -358,32 +337,32 @@ word_count: 672
 </tr>
 </table>
 
-```
-┌─────────────────────────────────────────────┐
-│  Download Engine                            │
-│  Paste a URL, choose a destination…         │
-│                                             │
-│  ┌─────────────────────────────────────────┐│
-│  │  URL          [🔗] [input field      ]  ││
-│  │  FILENAME     [📄] [input field      ]  ││
-│  │  SAVE TO      [path input] [📁 btn]     ││
-│  │                                         ││
-│  │  ─────────────────────────────────────  ││
-│  │  PROGRESS       73%      12.4 MB/s      ││
-│  │  ██████████████████░░░░░░░░░░░░░░░░░░  ││
-│  │  Downloading…                           ││
-│  │                                         ││
-│  │  ─────────────────────────────────────  ││
-│  │  ACTIVITY LOG              [Clear]      ││
-│  │  ┌─────────────────────────────────────┐││
-│  │  │ 12:04:01 Conectando a: https://…    │││
-│  │  │ 12:04:02 TLS handshake complete  ✓  │││
-│  │  │ 12:04:03 Progress: 45% — 32.1 MB    │││
-│  │  └─────────────────────────────────────┘││
-│  └─────────────────────────────────────────┘│
-│                                             │
-│  [Cancel]                       [Start ▼]   │
-└─────────────────────────────────────────────┘
+```text
+ ┌─────────────────────────────────────────────┐
+ │  ✨ Download Engine                         │
+ │  Paste a URL, choose a destination…         │
+ │                                             │
+ │  ┌─────────────────────────────────────────┐│
+ │  │  URL          [🔗] [https://example...] ││
+ │  │  FILENAME     [📄] [article-name      ] ││
+ │  │  SAVE TO      [~/Downloads] [📁 btn]    ││
+ │  │                                         ││
+ │  │  ─────────────────────────────────────  ││
+ │  │  PROGRESS       73%      12.4 MB/s      ││
+ │  │  ██████████████████░░░░░░░░░░░░░░░░░░   ││
+ │  │  Downloading…                           ││
+ │  │                                         ││
+ │  │  ─────────────────────────────────────  ││
+ │  │  ACTIVITY LOG              [🧹 Clear]   ││
+ │  │  ┌─────────────────────────────────────┐││
+ │  │  │ ℹ️ 12:04:01 Conectando a: https://… │││
+ │  │  │ ✅ 12:04:02 TLS handshake complete  │││
+ │  │  │ 🔄 12:04:03 Progress: 45% — 32.1 MB │││
+ │  │  └─────────────────────────────────────┘││
+ │  └─────────────────────────────────────────┘│
+ │                                             │
+ │  [❌ Cancel]                     [▶️ Start] │
+ └─────────────────────────────────────────────┘
 ```
 
 ### Integration
@@ -533,36 +512,26 @@ events.on_store_complete.connect(lambda path, size: ...)
 
 <div align="center">
 
-```
-INPUT: 3,200 word article
-              │
-              ▼
-┌─────────────────────────────────────────────────┐
-│           Paragraph Boundary Detection           │
-│     Split on \n\n — never mid-paragraph          │
-└────────────────────────────┬────────────────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-        ┌──────────┐  ┌──────────┐  ┌──────────────┐
-        │ Chunk 0  │  │ Chunk 1  │  │  Remaining   │
-        │ 687 words│  │ 724 words│  │  312 words   │
-        │          │  │          │  │              │
-        │ ✓ > 500  │  │ ✓ > 500  │  │ ⚠ < 500     │
-        └──────────┘  └──────────┘  └──────┬───────┘
-                                           │
-                                           ▼
-                              ┌──────────────────────┐
-                              │  Merge into Chunk 1   │
-                              │  724 + 312 = 1036...  │
-                              │  Exceeds 800? → Keep  │
-                              │  separate as Chunk 2   │
-                              └──────────────────────┘
+```mermaid
+flowchart TD
+    I(["📄 INPUT: 3,200 word article"]) --> P{"🔍 Paragraph Boundary Detection<br/><i>Split on \n\n — never mid-paragraph</i>"}
 
-OUTPUT:
-  chunk_000_a3f2b8c9.md  →  687 words
-  chunk_001_b4c3d9e2.md  →  724 words
-  chunk_002_e5d4f0a1.md  →  312 words (or merged)
+    P --> C0["📦 Chunk 0<br/><i>687 words</i><br/>✅ > 500"]
+    P --> C1["📦 Chunk 1<br/><i>724 words</i><br/>✅ > 500"]
+    P --> R["⚠️ Remaining<br/><i>312 words</i><br/>❌ < 500"]
+
+    R --> M{{"🔄 Merge into Chunk 1<br/><i>724 + 312 = 1036...</i><br/>Exceeds 800? → Keep separate"}}
+
+    C0 -.-> O0[/"📄 chunk_000_a3f2b8c9.md"/]
+    C1 -.-> O1[/"📄 chunk_001_b4c3d9e2.md"/]
+    M -.-> O2[/"📄 chunk_002_e5d4f0a1.md (or merged)"/]
+
+    style I fill:#3498db,stroke:#2980b9,stroke-width:2px,color:#fff
+    style P fill:#9b59b6,stroke:#8e44ad,stroke-width:2px,color:#fff
+    style M fill:#f1c40f,stroke:#f39c12,stroke-width:2px,color:#333
+    style C0 fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:#fff
+    style C1 fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:#fff
+    style R fill:#e74c3c,stroke:#c0392b,stroke-width:2px,color:#fff
 ```
 
 </div>
