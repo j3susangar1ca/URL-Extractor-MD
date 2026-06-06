@@ -227,62 +227,62 @@ class CurlCffiEngine:
         proxy_url: str | None = proxy.url if proxy else None
 
         try:
-            async with session.get(
+            resp = await session.get(
                 url,
                 headers=headers,
                 proxy=proxy_url,
                 timeout=self._config.request_timeout_sec,
                 allow_redirects=True,
                 stream=True,
-            ) as resp:
-                status_code: int = resp.status_code
+            )
+            status_code: int = resp.status_code
 
-                # --- Encoding detection ---
-                encoding = self._detect_encoding(resp)
+            # --- Encoding detection ---
+            encoding = self._detect_encoding(resp)
 
-                # --- Response headers ---
-                resp_headers = self._extract_headers(resp)
+            # --- Response headers ---
+            resp_headers = self._extract_headers(resp)
 
-                # --- Streaming body download ---
-                chunks: list[bytes] = []
-                total_received = 0
+            # --- Streaming body download ---
+            chunks: list[bytes] = []
+            total_received = 0
 
-                async for chunk in resp.aiter_content(
-                    chunk_size=self._config.chunk_size_bytes
-                ):
-                    if self._is_cancelled(cancel_event):
-                        raise NetworkError(
-                            "Download cancelled during streaming.", code="BE-302"
-                        )
-
-                    if not chunk:
-                        continue
-
-                    chunks.append(chunk)
-                    total_received += len(chunk)
-
-                    # Emit progress for each significant chunk
-                    await self._emit_progress(
-                        ProgressEvent(
-                            stage=Stage.DOWNLOADING,
-                            percent=0,  # percent is computed by the pipeline
-                            message=f"Descargando… {total_received:,} bytes",
-                            meta={
-                                "bytes_received": total_received,
-                                "chunk_size": len(chunk),
-                                "url": url,
-                            },
-                        )
+            async for chunk in resp.aiter_content(
+                chunk_size=self._config.chunk_size_bytes
+            ):
+                if self._is_cancelled(cancel_event):
+                    raise NetworkError(
+                        "Download cancelled during streaming.", code="BE-302"
                     )
 
-                payload = b"".join(chunks)
-                self._logger.debug(
-                    "Downloaded %s — %d bytes, status %d.",
-                    url,
-                    total_received,
-                    status_code,
+                if not chunk:
+                    continue
+
+                chunks.append(chunk)
+                total_received += len(chunk)
+
+                # Emit progress for each significant chunk
+                await self._emit_progress(
+                    ProgressEvent(
+                        stage=Stage.DOWNLOADING,
+                        percent=0,  # percent is computed by the pipeline
+                        message=f"Descargando… {total_received:,} bytes",
+                        meta={
+                            "bytes_received": total_received,
+                            "chunk_size": len(chunk),
+                            "url": url,
+                        },
+                    )
                 )
-                return payload, status_code, encoding, resp_headers
+
+            payload = b"".join(chunks)
+            self._logger.debug(
+                "Downloaded %s — %d bytes, status %d.",
+                url,
+                total_received,
+                status_code,
+            )
+            return payload, status_code, encoding, resp_headers
 
         except NetworkError:
             raise
