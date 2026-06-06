@@ -77,7 +77,7 @@ class CurlCffiEngine:
         """
         self._config = config
         self._logger = logger or logging.getLogger(__name__)
-        self._sessions: dict[str, AsyncSession] = {}
+        self._sessions: dict[str, tuple[AsyncSession, asyncio.AbstractEventLoop]] = {}
         self._progress_callback = progress_callback
         self._closed = False
 
@@ -98,13 +98,32 @@ class CurlCffiEngine:
         Returns:
             An ``AsyncSession`` configured with the requested fingerprint.
         """
-        if impersonate_id not in self._sessions:
-            session = AsyncSession(impersonate=impersonate_id)
-            self._sessions[impersonate_id] = session
-            self._logger.debug(
-                "Created new AsyncSession for profile '%s'.", impersonate_id
-            )
-        return self._sessions[impersonate_id]
+        current_loop = asyncio.get_running_loop()
+        cached = self._sessions.get(impersonate_id)
+        if cached is not None:
+            cached_session, cached_loop = cached
+            if cached_loop is current_loop:
+                return cached_session
+            else:
+                self._logger.debug(
+                    "Cached session for profile '%s' is on a different event loop. Creating a new one.",
+                    impersonate_id,
+                )
+                if cached_loop.is_running():
+                    try:
+                        cached_loop.call_soon_threadsafe(
+                            lambda: asyncio.create_task(cached_session.close())
+                        )
+                    except Exception:
+                        pass
+                self._sessions.pop(impersonate_id, None)
+
+        session = AsyncSession(impersonate=impersonate_id)
+        self._sessions[impersonate_id] = (session, current_loop)
+        self._logger.debug(
+            "Created new AsyncSession for profile '%s'.", impersonate_id
+        )
+        return session
 
     # ------------------------------------------------------------------
     #  Header assembly
@@ -384,7 +403,7 @@ class CurlCffiEngine:
 
         self._closed = True
 
-        for profile_id, session in self._sessions.items():
+        for profile_id, (session, _) in self._sessions.items():
             try:
                 await session.close()
                 self._logger.debug(
