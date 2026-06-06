@@ -1090,9 +1090,9 @@ class EliteScraperBackend:
     async def _execute_with_backoff(
         self,
         url: str,
-        operation: Callable[[], Awaitable[Response]],
+        operation: Callable[[], Awaitable[Union[Response, Tuple[bytes, Response]]]],
         max_retries: int,
-    ) -> Tuple[Response, int]:
+    ) -> Tuple[Union[Response, Tuple[bytes, Response]], int]:
         """Ejecuta una operación HTTP con backoff exponencial y jitter.
 
         Reintenta ante errores transitorios (429, 5xx, timeout, DNS)
@@ -1101,11 +1101,11 @@ class EliteScraperBackend:
 
         Args:
             url: URL objetivo (para logging).
-            operation: Callable async que retorna un Response.
+            operation: Callable async que retorna un Response o (bytes, Response).
             max_retries: Número máximo de reintentos.
 
         Returns:
-            Tupla (Response, intentos_realizados).
+            Tupla (Resultado, intentos_realizados).
 
         Raises:
             NetworkError: Si se agotan los reintentos.
@@ -1113,12 +1113,17 @@ class EliteScraperBackend:
         attempt = 0
         while True:
             try:
-                resp = await operation()
+                res = await operation()
+                if isinstance(res, tuple):
+                    _, resp = res
+                else:
+                    resp = res
+
                 if resp.status_code in {429, 500, 502, 503, 504}:
                     raise RequestsError(
                         f"HTTP transitorio {resp.status_code}"
                     )
-                return resp, attempt
+                return res, attempt
             except (RequestsError, asyncio.TimeoutError, OSError) as exc:
                 if attempt >= max_retries:
                     raise NetworkError(
