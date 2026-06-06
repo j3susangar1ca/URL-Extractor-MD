@@ -570,6 +570,20 @@ class Icons:
             return QIcon()
 
     @staticmethod
+    def preview() -> QIcon:
+        """Return a preview/eye icon in the primary text color."""
+        svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+            viewBox="0 0 24 24" fill="none" stroke="{{COLOR}}" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
+        </svg>'''
+        try:
+            return Icons._svg_icon(svg)
+        except Exception:
+            return QIcon()
+
+    @staticmethod
     def clear() -> QIcon:
         """Return a clear/trash icon in the primary text color."""
         svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
@@ -1198,6 +1212,7 @@ class EliteScraperUI(QMainWindow):
         has_input = len(url) > 0 and len(filename) > 0
 
         self.download_btn.setEnabled(has_input and not self._is_extracting)
+        self.preview_btn.setEnabled(has_input and not self._is_extracting)
 
         # Auto-generate filename from URL if empty
         if url and not filename:
@@ -1212,6 +1227,7 @@ class EliteScraperUI(QMainWindow):
                     self.filename_input.setText(base)
                     self.filename_input.blockSignals(False)
                     self.download_btn.setEnabled(True)
+                    self.preview_btn.setEnabled(True)
             except Exception:
                 pass
 
