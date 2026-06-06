@@ -212,6 +212,44 @@ class ExtractionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PreviewResult:
+    """Preview of the metadata and projected chunking analysis."""
+
+    title: str
+    author: str
+    site_name: str
+    description: str
+    content_type: str
+    language: str
+    published_date: str
+    keywords: List[str]
+    estimated_word_count: int
+    projected_chunks: int
+
+
+class RAGPipeline:
+    """High-level processing pipeline helper for metadata previews."""
+
+    @staticmethod
+    def preview(result: ExtractionResult) -> PreviewResult:
+        """Create a dry-run preview from the extraction result."""
+        chunker = RAGChunker()
+        chunks = chunker.chunk(result)
+        return PreviewResult(
+            title=result.metadata.title,
+            author=result.metadata.author,
+            site_name=result.metadata.site_name,
+            description=result.metadata.description,
+            content_type=result.metadata.content_type.value,
+            language=result.metadata.language,
+            published_date=result.metadata.published_date,
+            keywords=result.metadata.keywords,
+            estimated_word_count=result.word_count,
+            projected_chunks=len(chunks),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class RAGChunk:
     """A single RAG-ready chunk derived from an :class:`ExtractionResult`."""
 
