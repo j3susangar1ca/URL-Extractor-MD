@@ -1277,6 +1277,8 @@ class EliteScraperBackend:
         output_filename: str,
         output_directory: Union[str, Path],
         callback: Optional[CallbackType] = None,
+        cancel_event: Optional[asyncio.Event] = None,
+        preview_only: bool = False,
     ) -> ScrapingResult:
         """Pipeline completo de extracción para una única URL.
 
@@ -1290,6 +1292,8 @@ class EliteScraperBackend:
             output_filename: Nombre base del archivo (sin extensión).
             output_directory: Directorio de destino absoluto o relativo.
             callback: Callable async o sync que recibe ProgressEvent.
+            cancel_event: Evento asyncio opcional para soportar cancelación thread-safe.
+            preview_only: Si es True, sólo se previsualiza la metadata y no se guarda a disco.
 
         Returns:
             ScrapingResult inmutable con output_path al .md, metadatos y estado.
@@ -1329,6 +1333,10 @@ class EliteScraperBackend:
         payload_bytes = b""
 
         try:
+            # Verificar cancelación antes de iniciar
+            if cancel_event is not None and cancel_event.is_set():
+                raise asyncio.CancelledError("Extracción cancelada por el usuario.")
+
             async with self._sem:
                 # --- 3. Perfil estocástico L4/L7 ---
                 profile = random.choice(_PROFILES_POOL)
@@ -1350,15 +1358,16 @@ class EliteScraperBackend:
                 if proxy:
                     proxy_used = proxy.url
 
-                # --- 6. Descarga con progreso ---
-                payload_bytes = await self._download_with_progress(
-                    url, session, proxy, profile, None, bridge
-                )
+                # Verificar cancelación
+                if cancel_event is not None and cancel_event.is_set():
+                    raise asyncio.CancelledError("Extracción cancelada por el usuario.")
 
-                # Request no-streaming para status/headers (evaluación Φ)
-                resp, retries = await self._execute_with_backoff(
+                # --- 6. Descarga con progreso en un solo flujo (sin handshake duplicado) ---
+                (payload_bytes, resp), retries = await self._execute_with_backoff(
                     url,
-                    lambda: self._acquire(url, session, proxy, profile, None),
+                    lambda: self._download_with_progress(
+                        url, session, proxy, profile, None, bridge, cancel_event
+                    ),
                     self._config.max_retries,
                 )
                 status_code = resp.status_code
@@ -1377,6 +1386,10 @@ class EliteScraperBackend:
                             meta={"status_code": status_code},
                         )
                     )
+
+                    # Verificar cancelación
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise asyncio.CancelledError("Extracción cancelada por el usuario.")
 
                     # --- 8. Resolver CAPTCHA ---
                     await bridge.emit(
@@ -1398,18 +1411,19 @@ class EliteScraperBackend:
                         )
                     )
 
+                    # Verificar cancelación
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise asyncio.CancelledError("Extracción cancelada por el usuario.")
+
                     # --- 9. Re-descarga con tokens ---
-                    resp, _ = await self._execute_with_backoff(
+                    (payload_bytes, resp), _ = await self._execute_with_backoff(
                         url,
-                        lambda: self._acquire(
-                            url, session, proxy, profile, tokens
+                        lambda: self._download_with_progress(
+                            url, session, proxy, profile, tokens, bridge, cancel_event
                         ),
                         1,
                     )
                     status_code = resp.status_code
-                    payload_bytes = await self._download_with_progress(
-                        url, session, proxy, profile, tokens, bridge
-                    )
 
                 if not (200 <= status_code < 300):
                     elapsed = (time.perf_counter() - t0) * 1000
@@ -1433,6 +1447,10 @@ class EliteScraperBackend:
                         error=f"HTTP {status_code}",
                     )
 
+                # Verificar cancelación
+                if cancel_event is not None and cancel_event.is_set():
+                    raise asyncio.CancelledError("Extracción cancelada por el usuario.")
+
                 # --- 10. Extracción RAG aislada (Π) ---
                 await bridge.emit(
                     ProgressEvent(
@@ -1445,7 +1463,8 @@ class EliteScraperBackend:
                 )
 
                 t_extract_start = time.perf_counter()
-                extracted = await self._extractor.extract(payload_bytes, url)
+                detected_encoding = resp.encoding or "utf-8"
+                extracted = await self._extractor.extract(payload_bytes, url, encoding=detected_encoding)
                 extract_duration_ms = (time.perf_counter() - t_extract_start) * 1000
 
                 # --- 11. Construir ExtractionResult ---
@@ -1499,6 +1518,64 @@ class EliteScraperBackend:
                 word_count = extraction_result.word_count
                 content_type = extraction_result.metadata.content_type.value
 
+                # --- Manejo del modo de previsualización (Preview) ---
+                if preview_only:
+                    preview = RAGPipeline.preview(extraction_result)
+
+                    preview_card = (
+                        "\n=== PREVISUALIZACIÓN DE EXTRACCIÓN ===\n"
+                        f"Título:        {preview.title}\n"
+                        f"Autor:         {preview.author or 'N/A'}\n"
+                        f"Sitio:         {preview.site_name or 'N/A'}\n"
+                        f"Descripción:   {preview.description or 'N/A'}\n"
+                        f"Tipo Content:  {preview.content_type}\n"
+                        f"Idioma:        {preview.language or 'N/A'}\n"
+                        f"Publicado:     {preview.published_date or 'N/A'}\n"
+                        f"Keywords:      {', '.join(preview.keywords) if preview.keywords else 'N/A'}\n"
+                        f"Palabras Est.: {preview.estimated_word_count}\n"
+                        f"Chunks Proy.:  {preview.projected_chunks}\n"
+                        "======================================="
+                    )
+                    self._logger.info(preview_card)
+
+                    elapsed = (time.perf_counter() - t0) * 1000
+                    await bridge.emit(
+                        ProgressEvent(
+                            stage=Stage.COMPLETED,
+                            percent=100,
+                            message="Previsualización completada con éxito.",
+                            meta={
+                                "preview": {
+                                    "title": preview.title,
+                                    "author": preview.author,
+                                    "site_name": preview.site_name,
+                                    "description": preview.description,
+                                    "content_type": preview.content_type,
+                                    "language": preview.language,
+                                    "published_date": preview.published_date,
+                                    "keywords": preview.keywords,
+                                    "word_count": preview.estimated_word_count,
+                                    "projected_chunks": preview.projected_chunks,
+                                },
+                                "elapsed_ms": elapsed,
+                            },
+                        )
+                    )
+
+                    return ScrapingResult(
+                        success=True,
+                        url=url,
+                        output_path="",
+                        status_code=status_code,
+                        proxy_used=proxy_used,
+                        profile_used=profile_used,
+                        waf_detected=waf_detected,
+                        captcha_solved=captcha_solved,
+                        elapsed_ms=elapsed,
+                        word_count=word_count,
+                        content_type=content_type,
+                    )
+
                 # --- 12. Construir documento .md con YAML frontmatter ---
                 md_document = MarkdownBuilder().build_document(extraction_result)
 
@@ -1510,6 +1587,10 @@ class EliteScraperBackend:
                         message=f"Guardando documento .md en {md_path.name}...",
                     )
                 )
+
+                # Verificar cancelación
+                if cancel_event is not None and cancel_event.is_set():
+                    raise asyncio.CancelledError("Extracción cancelada por el usuario antes de guardar.")
 
                 saved_path = await self._storage.save_markdown(
                     md_path, md_document
@@ -1571,6 +1652,8 @@ class EliteScraperBackend:
                 elapsed_ms=elapsed,
                 error=err_msg,
             )
+        finally:
+            self.clear_cookies()
 
     # ------------------------------------------------------------------
     async def close(self) -> None:
