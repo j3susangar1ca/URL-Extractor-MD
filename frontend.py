@@ -1432,6 +1432,7 @@ class EliteScraperUI(QMainWindow):
         """Restore all interactive widgets to their idle/extraction-ready state."""
         self.download_btn.setText("  Iniciar Extracci\u00f3n")
         self.download_btn.setEnabled(True)
+        self.preview_btn.setEnabled(True)
         self.cancel_btn.setVisible(False)
         self.url_input.setReadOnly(False)
         self.filename_input.setReadOnly(False)
