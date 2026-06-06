@@ -98,10 +98,19 @@ class CurlCffiEngine:
         Returns:
             An ``AsyncSession`` configured with the requested fingerprint.
         """
-        current_loop = asyncio.get_running_loop()
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
         cached = self._sessions.get(impersonate_id)
         if cached is not None:
-            cached_session, cached_loop = cached
+            if isinstance(cached, tuple) and len(cached) == 2:
+                cached_session, cached_loop = cached
+            else:
+                cached_session = cached
+                cached_loop = current_loop
+
             if cached_loop is current_loop:
                 return cached_session
             else:
@@ -109,7 +118,7 @@ class CurlCffiEngine:
                     "Cached session for profile '%s' is on a different event loop. Creating a new one.",
                     impersonate_id,
                 )
-                if cached_loop.is_running():
+                if cached_loop and cached_loop.is_running():
                     try:
                         cached_loop.call_soon_threadsafe(
                             lambda: asyncio.create_task(cached_session.close())
@@ -403,7 +412,12 @@ class CurlCffiEngine:
 
         self._closed = True
 
-        for profile_id, (session, _) in self._sessions.items():
+        for profile_id, cached in self._sessions.items():
+            if isinstance(cached, tuple) and len(cached) == 2:
+                session, _ = cached
+            else:
+                session = cached
+
             try:
                 await session.close()
                 self._logger.debug(
