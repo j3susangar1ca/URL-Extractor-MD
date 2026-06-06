@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "url-extractor-md"
+version = "2.0.0"
+description = "Enterprise-grade web extraction with RAG pipeline, TLS fingerprinting, and WAF evasion"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "URL Extractor MD Team"},
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "curl_cffi>=0.6.0",
+    "beautifulsoup4>=4.12.0",
+    "html2text>=2024.2.26",
+    "lxml>=5.0.0",
+    "selectolax>=0.3.17",
+]
+
+[project.optional-dependencies]
+captcha = ["playwright>=1.40.0"]
+gui = ["PySide6>=6.6.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "mypy>=1.8.0",
+    "ruff>=0.3.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["url_extractor_md*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
