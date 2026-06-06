@@ -654,8 +654,7 @@ class EliteScraperUI(QMainWindow):
             self._thread = None
         self._worker = None
 
-
-def _log(self, msg: str, level: str) -> None:
-    """Append a log message to the console."""
-    prefix = LogLevel.PREFIXES.get(level, "")
-    self.log_console.append(f"{prefix}{msg}")
+    def _log(self, msg: str, level: str) -> None:
+        """Append a log message to the console."""
+        prefix = LogLevel.PREFIXES.get(level, "")
+        self.log_console.append(f"{prefix}{msg}")
