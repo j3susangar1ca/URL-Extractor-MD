@@ -705,24 +705,30 @@ class ScrapeWorker(QObject):
     finished         = Signal(object)         # ScrapingResult or None
     warning_state    = Signal(bool)           # True = show warning color
 
-    def __init__(self, url: str, filename: str, save_path: str) -> None:
+    def __init__(self, url: str, filename: str, save_path: str, preview_only: bool = False) -> None:
         """Initialize the scrape worker.
 
         Args:
             url: Target URL to scrape.
             filename: Output filename (without extension).
             save_path: Directory where the output will be saved.
+            preview_only: Whether to perform a dry-run metadata preview.
         """
         super().__init__()
         self.url: str = url
         self.filename: str = filename
         self.save_path: str = save_path
+        self.preview_only: bool = preview_only
         self._is_cancelled: bool = False
         self._backend: Optional[EliteScraperBackend] = None
+        self._cancel_event: Optional[asyncio.Event] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def cancel(self) -> None:
         """Request cancellation of the in-progress scraping pipeline."""
         self._is_cancelled = True
+        if self._loop and self._cancel_event:
+            self._loop.call_soon_threadsafe(self._cancel_event.set)
 
     def run(self) -> None:
         """Entry point for the QThread.
@@ -731,16 +737,17 @@ class ScrapeWorker(QObject):
         to completion, handling all exceptions and ensuring the loop is
         properly closed.
         """
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
         try:
-            loop.run_until_complete(self._execute_pipeline())
+            self._loop.run_until_complete(self._execute_pipeline())
         except Exception as exc:
             self.log_message.emit(f"Error fatal: {exc}", LogLevel.ERROR)
             self.status_changed.emit("error")
             self.finished.emit(None)
         finally:
-            loop.close()
+            self._loop.close()
+            self._loop = None
 
     async def _execute_pipeline(self) -> None:
         """Execute the full scraping pipeline using ``EliteScraperBackend``.
@@ -750,24 +757,43 @@ class ScrapeWorker(QObject):
         on the result.
         """
         self._backend = EliteScraperBackend()
+        self._cancel_event = asyncio.Event()
         try:
             result = await self._backend.scrape_single(
                 url=self.url,
                 output_filename=self.filename,
                 output_directory=self.save_path,
                 callback=self._on_progress_event,
+                cancel_event=self._cancel_event,
+                preview_only=self.preview_only,
             )
             if result.success:
                 self.progress_updated.emit(100)
                 self.status_changed.emit("done")
-                self.log_message.emit(
-                    f"Extracci\u00f3n completada: {result.output_path}",
-                    LogLevel.SUCCESS,
-                )
+                if self.preview_only:
+                    self.log_message.emit(
+                        "Previsualizaci\u00f3n finalizada con \u00e9xito (los datos se mostraron en la consola).",
+                        LogLevel.SUCCESS,
+                    )
+                else:
+                    self.log_message.emit(
+                        f"Extracci\u00f3n completada: {result.output_path}",
+                        LogLevel.SUCCESS,
+                    )
             else:
                 self.status_changed.emit("error")
                 self.log_message.emit(f"Fallo: {result.error}", LogLevel.ERROR)
             self.finished.emit(result)
+        except asyncio.CancelledError:
+            self.status_changed.emit("error")
+            self.log_message.emit("Operaci\u00f3n cancelada por el usuario.", LogLevel.WARNING)
+            res = ScrapingResult(
+                success=False,
+                url=self.url,
+                status_code=None,
+                error="Cancelado por el usuario",
+            )
+            self.finished.emit(res)
         except Exception as exc:
             self.status_changed.emit("error")
             self.log_message.emit(f"Error: {exc}", LogLevel.ERROR)
