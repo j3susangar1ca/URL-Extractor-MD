@@ -1150,7 +1150,8 @@ class EliteScraperBackend:
         profile: BrowserProfile,
         captcha_tokens: Optional[Dict[str, str]],
         bridge: CallbackBridge,
-    ) -> bytes:
+        cancel_event: Optional[asyncio.Event] = None,
+    ) -> Tuple[bytes, Response]:
         """Descarga con monitoreo de progreso real por chunks.
 
         Emite eventos ``DOWNLOADING`` con porcentaje estimado basado
@@ -1163,10 +1164,15 @@ class EliteScraperBackend:
             profile: Perfil de navegador para headers.
             captcha_tokens: Headers adicionales de CAPTCHA resuelto.
             bridge: Bridge para emitir eventos de progreso.
+            cancel_event: Evento asyncio opcional para soportar cancelación thread-safe.
 
         Returns:
-            Bytes del payload descargado.
+            Tupla de (bytes, Response) del payload descargado y la respuesta de red.
         """
+        # Verificar cancelación antes de iniciar
+        if cancel_event is not None and cancel_event.is_set():
+            raise asyncio.CancelledError("Operación cancelada por el usuario antes de la descarga.")
+
         headers: Dict[str, str] = {
             **self._config.base_headers,
             "User-Agent": profile.user_agent,
@@ -1183,6 +1189,10 @@ class EliteScraperBackend:
                 url, headers=headers, proxies=proxies, stream=True
             )
 
+        # Si detectamos un código de estado transitorio de error, no descargamos los chunks y retornamos vacío
+        if resp.status_code in {429, 500, 502, 503, 504}:
+            return b"", resp
+
         total = resp.headers.get("content-length")
         total_len = int(total) if total else None
         downloaded = 0
@@ -1191,6 +1201,10 @@ class EliteScraperBackend:
         async for chunk in resp.aiter_content(
             chunk_size=self._config.chunk_size_bytes
         ):
+            # Monitorear cancelación en cada iteración de chunk
+            if cancel_event is not None and cancel_event.is_set():
+                raise asyncio.CancelledError("Descarga cancelada por el usuario durante la transmisión.")
+            
             chunks.append(chunk)
             downloaded += len(chunk)
             if total_len:
@@ -1216,7 +1230,7 @@ class EliteScraperBackend:
                     )
                 )
 
-        return b"".join(chunks)
+        return b"".join(chunks), resp
 
     # ------------------------------------------------------------------
     async def _acquire(
