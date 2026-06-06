@@ -75,6 +75,8 @@ from rag_extract import (
     ExtractionStatus,
     SlugGenerator,
     StorageResult,
+    RAGPipeline,
+    PreviewResult,
 )
 
 # =============================================================================
